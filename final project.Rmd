@@ -1,0 +1,488 @@
+---
+title: "Analysis to the data of NFL"
+author: "Jiazhang Cai"
+date: "4/26/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r warning=FALSE, include=FALSE}
+library(tidyverse)
+library(PerformanceAnalytics)
+library(ROCR)
+library(rpart)
+library(rpart.plot)
+library(cowplot)
+library(pROC)
+```
+
+# Abstract
+
+Football is one of the most popular sport in USA. This report present some analysis to the data of the attendence of each game, the evaluation of each team and the situation of each game. The content is consisted of three main parts, relating to three different datasets. First is about the study of the attendence. We aim to find the variable that effect the attendence most. Second is about the evaluation of every team. Here uses whether the team play the playoffs as the response to partially standing for the strength of a team. Finally is about the estimation to the game's result. We aim to find if there are any variable that may effect the result except the strength of the teams. These three parts are independent with each other although they used each datasets. For every topic, we assume that the data is the origin data and we won't use the model or variable created in other parts.      
+
+# Basic information about the dataset      
+
+```{r input data of the attendence, warning=FALSE, include=FALSE}
+attendance <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/attendance.csv') %>%
+  as.data.frame() %>%
+  filter(year >= 2010)
+```
+The main data is about the NFL stadium attendence from "https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-02-04". There are three tables in the dataset.         
+
+The first one is the overview of the attendence and the dictionary of this dataset is:    
+
+variable | class | description
+--------|--------|------------
+team | character | team city
+team_name | character | team name
+year | integer | season year
+total | double | total attendence across 17 weeks (1 week = no game)
+home | double | total home attendence 
+away | double | total away attendence
+week | character | week number (1-17)
+weekly_attendence | double | weekly attendence      
+
+```{r input data of the standings, warning=FALSE, include=FALSE}
+standings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/standings.csv') %>%
+  as.data.frame() %>%
+  filter(year >= 2010)
+```
+
+The second one is the information about each team and the dictionary of this dataset is:      
+
+variable | class | description
+--------|--------|-------------
+team | character | team city
+team_name | character | team name
+year | integer | season year
+wins | double | wins (0-16)
+loss | double | losses (0-16)
+points_for | double | points for offensive performance
+points_against | double | points for defensive performance
+points_differential | double | points_for-points_against
+margin_of schedule | double | (points scored-points allowed)/game played
+strength_of_schedule | double | average quality of opponent as measured as measured by SRS
+simple rating | double | team quality relative to average as measured by SRS
+offensive_ranking | double | team offense quality relative to average as measured by SRS
+defensive_ranking | double | team defense quality relative to average as measured by SRS
+playoffs | character | made playoffs or not
+sb_winner | character | won superbowl or not     
+
+```{r input data of the games, warning=FALSE, include=FALSE}
+games <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/games.csv') %>%
+  as.data.frame() %>%
+  filter(year >= 2010)
+```
+
+The last one is the information of every games and the dictionary of this dataset is:     
+
+variable | class | description
+--------|--------|-------------
+year | integer | season year
+week | character | week number (1-17 and playoffs)
+home_team | character | home team
+away_team | character | away team
+winner | character | winning team
+tie | character | same for both team
+day | character | day of week
+date | character | date without year
+time | character | time of game start
+pts_win | double | points by winning team
+pts_loss | double | points by lossing team
+yds_win | double | yards by winning team
+turnovers_win | double | turnovers by winning team
+yds_loss | double | yards by losing team
+turnovers_loss | double | turnovers by losing team
+home_team_name | character | home team name
+home_team_city | character | home team city
+away_team_name | character | away team name
+away_team_name | character | away team city       
+
+The additional data is from "https://www2.census.gov/programs-surveys/popest/datasets/2010-2019/national/totals/", the *United States Census* website. The data is about the population and population change in every state of the United States.    
+
+```{r input data of the population, warning=FALSE, include=FALSE}
+population <- readr::read_csv("nst-est2019-popchg2010_2019.csv") %>%
+  .[-(1:5), 5:16] %>%
+  .[, -2] %>%
+  as.data.frame()
+colnames(population) <- c("state", "2010", "2011", "2012", "2013", "2014",
+                          "2015", "2016", "2017", "2018", "2019")
+population <- population %>%
+  gather(year, amount, -state)
+```
+
+# Data analysis      
+
+## 1.Attendance    
+
+### 1.1 Basic idea       
+
+To study the problem thoroughly, we can start from different aspects. The datasets provide sufficient information for each game, which allows us to find as much as possible variables that may effect the attendance.     
+
+We mainly devide these potential effects into three aspects, the location, the time and the players. The location is about the information of where the games played. It's obvious that the more people in one state, the more attendance tends to be because more people means more potential audiences, more support to the team, even more money for the improvrment to the team or the bigger stadium. According to our dataset, the population of each state is the best variable to quantify the location.     
+
+The time is about the information of when the games played. There are many dimensions to study the time effect. Different year, different week, different day, different time of a day may all influence the attendance. For example, there might be more audience in the weekend than the weekday, or there might be more audience at the end of the season than the start of the season. Each year's situation may also be different.     
+
+The team is the information of who played the games. Many audiences have their supporting teams, they would go to support their favorite team in person no matter the team played as the home team or away team. So the games played by the popular teams may tend to have a higher attendance.           
+
+### 1.2 Data preprocess     
+
+```{r construct the working data for attendance, warning=FALSE, include=FALSE}
+attendance_working <- attendance %>%
+  mutate(audience_rate = home/away) %>%
+  dplyr::select(team, team_name, year, audience_rate, 
+                week, weekly_attendance) %>%
+  na.omit() %>%
+  inner_join(population, c("team" = "state")) %>%
+  filter(year.x == year.y) %>%
+  dplyr::select(-year.y) %>%
+  rename(year = year.x)
+
+games_1 <- games %>%
+  mutate(day = ifelse(day == "Sat" | day == "Sun", 1, 0),
+         time = as.character(time),
+         time = as.double(substr(time, 1, 2)),
+         time = ifelse(time > 18, 1, 0)) %>%
+  dplyr::select(year, week, home_team_name, away_team_name, day, time)
+
+standings_1 <- standings %>%
+  dplyr::select(team_name, year, simple_rating)
+standings_1 <- standings_1 %>%
+  inner_join(standings_1, by = "year") %>%
+  rename(home = team_name.x, away = team_name.y)
+
+attendance_working <- attendance_working %>%
+  inner_join(games_1, by = "year") %>%
+  filter(week.x == week.y,
+         team_name == home_team_name) %>%
+  inner_join(standings_1, by = "year") %>%
+  filter(home_team_name == home,
+         away_team_name == away) %>%
+  dplyr::select(weekly_attendance, year, week.x, day, time,
+                audience_rate, amount, simple_rating.x, simple_rating.y) %>%
+  rename(week = week.x, home_rating = simple_rating.x, 
+         away_rating = simple_rating.y)
+```
+
+Based on the basic idea we have, we then clear up the data and combine different parts together as the working dataset. To build the model, what we need to do first is to quantify each variable. Our response in this part is the weekly attedance, or in other word, the attendance for each game. Here we just study the attendance for the home team, because the attendance is the information of the stadium not the team.     
+
+As mentioned before the locate can be expressed by the population of the state. We also create the variable called *attendance_rate*, which is the rate of the yearly attendance of the home team and the attendance of the away team. The difference between the attendance of home team and the away team is also a character of the stadium, however, we cannot use the absolute value because it is obviously correlated with the weekly attendance. This variable can represent the popularity of one team in its home city to some extent.      
+
+For the time information, we have *year*, *week*, *day* and *time*. They are all potential significant effects for the attendance. We can still separate these effects into two parts. One is the attention to the games will change from time to time, like in different stages of the season or different years, people may hold different interest to the games, especially during the playoffs or the Super Bowl. The other is the personal condition of every audience. For the common people, they may can't reach the stadium in person if the game is played during the work time. Therefore the attendeance of the games played during the weekend or evening may higher than the work time. Because the *day* and *time* are nominal variable, to simplify the problem, here transform them as binary variable. Set *day* equals to 1 if the game is played on weekend and equals to 0 if not. Set *time* equals to 1 if the games is played after 18:00 and equals to 0 if not.       
+
+For the team information, here mainly uses the *simple_rating*, the team quality relative to average as measured by SRS (Simple Rating System), to indicate the strength of the home team and the away team. As we know, the popular team may lead to more attendance and the strength of one team would influence its popularity a lot. Hence we also put the strength of the team into our consideration and let it be the quantified variable for the team information.      
+
+### 1.3 Model construct       
+
+After preprocessing the origin datasets, we get the working dataset with 8 effects and 1 response:     
+
+```{r head of working data, echo=FALSE, warning=FALSE}
+head(attendance_working)
+```
+
+Only *time* and *day* are nominal variables, the rest are all continuous variables. Next we will check the correlation between each effect and response, and find if we can remove any irrelevant variables to simplify the model:     
+
+```{r correlation of variables, echo=FALSE, warning=FALSE}
+attendance_cor <- attendance_working %>%
+  mutate(temp = weekly_attendance) %>%
+  dplyr::select(-day, -time, -weekly_attendance) %>%
+  rename(weekly_attendance = temp)
+
+chart.Correlation(attendance_cor)
+```
+
+From the plot above, the most left column indicates the correlation between every numeric effect and the response and the row at the bottom indicate the relationship between each effect and the response. We can learn that the most significant effects to the response are *audience_rate*, *amount* and *year*.       
+
+It's a little surprised that the strength of the teams doesn't influence the attendance a lot. But on the other hand we can find that the *home_rating* and *audience_rating* are highly correlated, which means that the strength of the home team can be partially explained by the audience rate. And the audience rate is one of the most significant effect to the response, which means that the strength of one team is not completely uncorrelated with the attendance.     
+
+What's more, notice that *amount* and *audience_rating* are highly coreelated, which indicates the difference between big state and small state. The bigger the state, or we say the bigger population of a state, the more support there would be to the home team.      
+
+Then for the binary variable *day* and *time*, we aim to find the variable that has significantly different performance in two different category. This is the distribution of attendance in two different categoty:       
+
+```{r choice for binary variable, echo=FALSE, warning=FALSE}
+attendance_category <- attendance_working %>%
+  dplyr::select(weekly_attendance, day, time)
+attendance_category$day <- factor(attendance_category$day)
+attendance_category$time <- factor(attendance_category$time)
+
+plots <- NULL
+plots[[1]] <- ggplot(attendance_category, aes(x = weekly_attendance, y = ..density..)) +
+  geom_histogram(aes(fill = day), alpha = 0.5) +
+  geom_density(aes(color = day), alpha = 0.7)
+plots[[2]] <- ggplot(attendance_category, aes(x = weekly_attendance, y = ..density..)) +
+  geom_histogram(aes(fill = time), alpha = 0.5) +
+  geom_density(aes(color = time), alpha = 0.7)
+plot_grid(plotlist = plots, nrow = 1)
+```
+
+It's hard to tell if the distributions of two categories are different. To quantify it, here uses the Kolmogorov-Smirnov Tests. KS test can quantify the difference between two distributions. If we set the confidence degree equals to 0.1, then we can choose the relative variable based on the degree we set:      
+
+```{r ks test, echo=FALSE, warning=FALSE}
+tibble(variable = c("day", "time"),
+       "p-value" = c(ks.test(attendance_working[attendance_working$day == 1, "weekly_attendance"],
+                             attendance_working[attendance_working$day == 0, "weekly_attendance"])$p.value,
+                     ks.test(attendance_working[attendance_working$time == 1, "weekly_attendance"],
+                             attendance_working[attendance_working$time == 0, "weekly_attendance"])$p.value)) %>%
+  as.data.frame() %>%
+  mutate("if choose" = ifelse(`p-value` < 0.1, "Yes", "No"))
+```
+
+So finally the features we select are *year*, *audience_rate*, *amount* and *time*. Then we constuct the linear regression model as follow:     
+
+```{r construct the linear model, echo=FALSE, warning=FALSE}
+model_attendance <- lm(weekly_attendance ~ year + audience_rate + amount +
+                         time, attendance_working)
+summary(model_attendance)
+```
+
+From the result of the regression, the R-squared is 0.7633, which indicates that the performance of the regerssion is not bad. The most significant effects are *amount* and *audience_rate*. It's not surprised that the population of a state will influence the attendance, because more people means more potential audiences. However, the audience rate is also significant. This indicates that the rate of the yearly attendance of home team and away team will also influence the attendance. That means, in the state will larger population, people will support their team more than the state with small population. The reason might be that people in the big city pay more attention to the football game as a kind of interest or entertainment.      
+
+## 2.Team strength       
+
+### 2.1 Basic idea    
+
+In this part, we aim to find something about the estimation to one team. The dataset has provided some relative estimation from SRS (Simple Rating System). There is a formula on how to calculate this score for every team and it is based on some basic information like wins, losses, points for each game. What we want to do is to find which of these effects influence the estimation most.     
+
+To study whether the estimation from SRS is correct, we need to find a response and set the estimation from SRS as the comparison group. Here uses whether the team made the playoffs as the response. We can also use whether the team won the superbowl as the response, but as we know, football games depend on fortune sometimes and also depend on the state of the players and it is hard to judge a team's strength by one game. Whether made the playoffs is a good choice. It not only can indicate the average strength of a team but also can simplify the problem. Besides, the data of it is more sufficient, which will lead to a more reasonable result.      
+
+### 2.2 Data preprocess       
+
+As mentioned, we aim to find how the response, whether the team made the playoffs, is affected. Therefore, we plan to use two models, one uses the estimation of SRS, the other uses the origin information. To compare these two models, we use cross validation to test their relative performance.      
+
+For the origin data, we first set the response *playoffs* equals to 1 if the team made the playoffs and equals to 0 if not. In this part, we remove the variable *year* because we assume that the estimation only depends on the performance of the team and would not be influenced by other effects like location and time. Or in other word, the performance of team has included some information of the other effects. The performance of the team is the direct effect to the final estimation to the team.      
+
+To implement the cross validation, we devide the dataset into two equal parts randomly as the training set and the test set.      
+
+```{r data preprocess for standings, warning=FALSE, include=FALSE}
+standings_working <- standings %>%
+  dplyr::select(-team, -team_name, -sb_winner, -year) %>%
+  mutate(playoffs = ifelse(playoffs == "Playoffs", 1, 0))
+
+set.seed(1)
+index <- sample(nrow(standings_working), nrow(standings_working)/2)
+standings_train <- standings_working[index, ]
+standings_test <- standings_working[-index, ]
+```
+
+### 2.3 Model constuct     
+
+Here we use two kinds of models to study this problem. For the estimation from the SRS, there are totally 5 variables: *simple_rating*, *margin_of_victory*, *strength_of_schedule*, *offensive_ranking* and *defensive_ranking*, where *simple_rating* = *margin_of_victory* + *strength_of_schedule* = *offensive_ranking* + *defensive_ranking*. To consist as many effects as possible, here uses all the variables expected *simple_rating* because it is the linear combination of others.    
+
+Logistic regression is suitable for the binary response. Here construct the logistic regression model with the training data:    
+
+```{r construct logistic regression, echo=FALSE, warning=FALSE}
+standings_working_logistic <- standings_train %>%
+  dplyr::select(playoffs, margin_of_victory, strength_of_schedule,
+                offensive_ranking, defensive_ranking)
+model_standings_logistic <- glm(playoffs ~ ., data = standings_working_logistic, family = "binomial")
+summary(model_standings_logistic)
+```
+
+For the model with origin information, here uses the decision tree because the decision tree can show us clearly which variables is the most effective variable to the response. This is the decision tree after pruning:      
+
+```{r construct the decision tree, echo=FALSE, warning=FALSE}
+standings_working_tree <- standings_train %>%
+  dplyr::select(playoffs, wins, loss, points_for, points_against, points_differential)
+standings_working_tree$playoffs <- factor(standings_working_tree$playoffs)
+model_standings_tree <- rpart(playoffs ~ ., standings_working_tree, method = "class",
+                              parms = list(split = "information"))
+model_standings_tree <- prune(model_standings_tree, 
+                              cp = model_standings_tree$cptable[which.min(
+                                model_standings_tree$cptable[, "xerror"]), "CP"])
+rpart.plot(model_standings_tree, branch = 1, type = 1, fallen.leaves = T)
+```
+
+It's surprised that if we set whether the team made the playoffs as a standard of a team's strength, the response only depends on the wins.    
+
+Then we calculate the accuracy, sensitivity, specifity, precision and F1-score for both model with the test data to compare their performance on the test data. This is the final result:     
+
+```{r model comparison, echo=FALSE, warning=FALSE}
+predict_logistic <- predict.glm(model_standings_logistic, standings_test, type = "response") 
+count_logistic <- rep(0, 4)
+for(i in 1:nrow(standings_test))
+{
+  if(standings_test$playoffs[i] == 1)
+  {
+    if(predict_logistic[i] >= 0.5) count_logistic[1] = count_logistic[1] + 1
+    else count_logistic[3] = count_logistic[3] + 1
+  }
+  else
+  {
+    if(predict_logistic[i] >= 0.5) count_logistic[2] = count_logistic[2] + 1
+    else count_logistic[4] = count_logistic[4] + 1
+  }
+}
+
+predict_tree <- predict(model_standings_tree, standings_test, type = "class")
+count_tree <- rep(0, 4)
+for(i in 1:nrow(standings_test))
+{
+  if(standings_test$playoffs[i] == 1)
+  {
+    if(predict_tree[i] == 1) count_tree[1] = count_tree[1] + 1
+    else count_tree[3] = count_tree[3] + 1
+  }
+  else
+  {
+    if(predict_tree[i] == 1) count_tree[2] = count_tree[2] + 1
+    else count_tree[4] = count_tree[4] + 1
+  }
+}
+tibble(model = c("logistic", "desicion tree"),
+       accuracy = c((count_logistic[1] + count_logistic[4])/sum(count_logistic),
+                    (count_tree[1] + count_tree[4])/sum(count_tree)),
+       sensitivity = c(count_logistic[1]/(count_logistic[1] + count_logistic[3]),
+                       count_tree[1]/(count_tree[1] + count_tree[3])),
+       specifity = c(count_logistic[4]/(count_logistic[2] + count_logistic[4]),
+                     count_tree[4]/(count_tree[2] + count_tree[4])),
+       precision = c(count_logistic[1]/(count_logistic[1] + count_logistic[2]),
+                     count_tree[1]/(count_tree[1] + count_tree[2])),
+       "F1-score" = c(2*count_logistic[1]/(2*count_logistic[1] + count_logistic[2] + count_logistic[3]),
+                      2*count_tree[1]/(2*count_tree[1] + count_tree[2] + count_tree[3]))) %>%
+  as.data.frame()
+```
+
+We can find the decision tree even perform better than the logistic model. As a result, we can say that the main effect to whether a team would made the playoffs. However, it's obvious that the wins would influence whether it would make the playoffs. This response may can't indicate everything of a team's strength because wins depends on too many other factors and it's also hard to judge whether the estimation to a team is correct or not.      
+
+## 3. Games      
+
+### 3.1 Basic idea       
+
+Although the three parts analysis are independent with each other, we can still take advantages of others idea to do the analysis. Similar to the study of attendance, we also separate all the origin information into three parts, location, time and the team. However, this time, the response is whether the home team won the game and the attendance becomes one of the effects.       
+
+### 3.2 Data preprocess     
+
+Similar to attendance, transform the variables into relative form.     
+
+```{r data prepeocess for games, warning=FALSE, include=FALSE}
+games_working <- games %>%
+  mutate(day = ifelse(day == "Sat" | day == "Sun", 1, 0),
+         time = as.character(time),
+         time = as.double(substr(time, 1, 2)),
+         time = ifelse(time > 18, 1, 0),
+         winner = ifelse(winner == home_team, 1, 0)) %>%
+  dplyr::select(year, week, home_team_name, away_team_name, day, time, winner)
+
+attendance_1 <- attendance %>%
+  mutate(audience_rate = home/away) %>%
+  dplyr::select(team, team_name, year, audience_rate, 
+                week, weekly_attendance) %>%
+  na.omit() %>%
+  inner_join(population, c("team" = "state")) %>%
+  filter(year.x == year.y) %>%
+  dplyr::select(-year.y) %>%
+  rename(year = year.x)
+
+games_working <- games_working %>%
+  inner_join(attendance_1, by = "year") %>%
+  filter(week.x == week.y,
+         team_name == home_team_name) %>%
+  inner_join(standings_1, by = "year") %>%
+  filter(home_team_name == home,
+         away_team_name == away) %>%
+  dplyr::select(winner, weekly_attendance, year, week.x, day, time,
+                audience_rate, amount, simple_rating.x, simple_rating.y) %>%
+  rename(week = week.x, home_rating = simple_rating.x, 
+         away_rating = simple_rating.y)
+games_working$week <- as.numeric(games_working$week)
+games_working$year <- as.numeric(games_working$year)
+```
+
+### 3.3 Model construct     
+
+Similar to attendance, we still want to do the features selection for the model. Unlike attendance, the response here is a binary response. For the continuous variables, we want to see if the variable has the same distributions for each outcome category:      
+
+```{r distribution, echo=FALSE, warning=FALSE}
+games_working_plot <- games_working
+games_working_plot$winner <- factor(games_working_plot$winner)
+
+plots <- NULL
+plots[[1]] <- ggplot(games_working_plot, aes(x = weekly_attendance, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plots[[2]] <- ggplot(games_working_plot, aes(x = year, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plots[[3]] <- ggplot(games_working_plot, aes(x = week, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plots[[4]] <- ggplot(games_working_plot, aes(x = audience_rate, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plots[[5]] <- ggplot(games_working_plot, aes(x = amount, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plots[[6]] <- ggplot(games_working_plot, aes(x = home_rating, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plots[[7]] <- ggplot(games_working_plot, aes(x = away_rating, y = ..density..)) +
+  geom_histogram(aes(fill = winner), alpha = 0.5) +
+  geom_density(aes(color = winner), alpha = 0.7)
+plot_grid(plotlist = plots, nrow = 3)
+```
+
+Instead of checking the correlation between each effect and response, we want to test if the distributions of each variable in two outcome category are same. Here uses KS test for continuous variables and P test for binary response to check each variable's distributions in two different group. If we set the confidence degree equals to 0.1, then we will get:        
+
+```{r feature selection, echo=FALSE, warning=FALSE}
+tibble(variable = c("weekly_attendance", "year", "week", "audience_rate",
+                    "amount", "home_rating", "away_rating", "day", "time"),
+       "p-value" = c(ks.test(games_working[games_working$winner == 1, "weekly_attendance"],
+                             games_working[games_working$winner == 0, "weekly_attendance"])$p.value,
+                     ks.test(games_working[games_working$winner == 1, "year"],
+                             games_working[games_working$winner == 0, "year"])$p.value,
+                     ks.test(games_working[games_working$winner == 1, "week"],
+                             games_working[games_working$winner == 0, "week"])$p.value,
+                     ks.test(games_working[games_working$winner == 1, "audience_rate"],
+                             games_working[games_working$winner == 0, "audience_rate"])$p.value,
+                     ks.test(games_working[games_working$winner == 1, "amount"],
+                             games_working[games_working$winner == 0, "amount"])$p.value,
+                     ks.test(games_working[games_working$winner == 1, "home_rating"],
+                             games_working[games_working$winner == 0, "home_rating"])$p.value,
+                     ks.test(games_working[games_working$winner == 1, "away_rating"],
+                             games_working[games_working$winner == 0, "away_rating"])$p.value,
+                     t.test(games_working[games_working$winner == 1, "day"],
+                            games_working[games_working$winner == 0, "day"])$p.value,
+                     t.test(games_working[games_working$winner == 1, "time"],
+                            games_working[games_working$winner == 0, "time"])$p.value)) %>%
+  as.data.frame() %>%
+  mutate("if choose" = ifelse(`p-value` < 0.1, "Yes", "No"))
+```
+
+From the result we get, we would use *home_rating*, *away_rating*, *day* and *time* as the main effects to the result of one game. In fact, the strength of the team is the main factor that may affect the result of the game. Other factor like location still is not significant enough to influence the result of the game. The interesting thing is that the time of the game can influence the result of the game more or less. It may because that players have different state at different time.     
+
+Then we build the logistic model using the features we get:     
+
+```{r logistic model for games, echo=FALSE, warning=FALSE}
+model_games <- glm(winner ~ home_rating + away_rating + day + time, 
+                   games_working, family = "binomial")
+summary(model_games)
+```
+
+This is the ROC curve and relative AUC. AUC here equals to 0.782 which is an ordinary result.     
+
+```{r ROC curve, echo=FALSE, warning=FALSE}
+predict_games <- predict.glm(model_games, type = "response")
+plot(roc(games_working$winner, predict_games), print.auc = TRUE, auc.polygon = TRUE, grid = c(0.1, 0.2),
+     grid.col=c("green", "red"), max.auc.polygon=TRUE, auc.polygon.col="skyblue", print.thres=TRUE)
+```
+
+Next we use a decision tree with all the original information to check how the effects influence the final result. This is the tree after pruning:       
+
+```{r decision tree for games, echo=FALSE, warning=FALSE}
+games_working_tree <- games_working 
+games_working_tree$winner <- factor(games_working_tree$winner)
+model_games_tree <- rpart(winner ~ ., games_working_tree, method = "class", parms = list(split = "information"))
+model_games_tree <- prune(model_games_tree, 
+                              cp = model_games_tree$cptable[which.min(
+                                model_games_tree$cptable[,"xerror"]), "CP"])
+rpart.plot(model_games_tree, branch = 1, type = 1, fallen.leaves = T)
+```
+
+Still, the strength of the teams is the mainly factor that affect the result of a game. However, the interesting thing is that *week* becomes one of the main factor, instead of the *day* or *time*.
+
+
+
+
+
+

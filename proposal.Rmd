@@ -1,0 +1,128 @@
+---
+title: "Proposal"
+author: "Jiazhang Cai"
+date: "4/5/2020"
+output: pdf_document
+---
+
+```{r warning=FALSE, include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+# Dataset     
+
+The data is about the NFL stadium attendence from "https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-02-04". There are three tables in the dataset. The first one is the overview of the attendence:   
+
+
+```{r echo=FALSE, warning=FALSE}
+attendance <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/attendance.csv') %>%
+  as.data.frame()
+head(attendance)
+```
+
+the dictionary of this dataset is:    
+
+variable | class | description
+--------|--------|------------
+team | character | team city
+team_name | character | team name
+year | integer | season year
+total | double | total attendence across 17 weeks (1 week = no game)
+home | double | total home attendence 
+away | double | total away attendence
+week | character | week number (1-17)
+weekly_attendence | double | weekly attendence     
+
+The second one is the information about each team:   
+
+```{r echo=FALSE, warning=FALSE}
+standings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/standings.csv') %>%
+  as.data.frame()
+head(standings)
+```
+
+the dictionary of this dataset is: 
+
+variable | class | description
+--------|--------|-------------
+team | character | team city
+team_name | character | team name
+year | integer | season year
+wins | double | wins (0-16)
+loss | double | losses (0-16)
+points_for | double | points for offensive performance
+points_against | double | points for defensive performance
+points_differential | double | points_for-points_against
+margin_of schedule | double | (points scored-points allowed)/game played
+strength_of_schedule | double | average quality of opponent as measured as measured by SRS
+simple rating | double | team quality relative to average as measured by SRS
+offensive_ranking | double | team offense quality relative to average as measured by SRS
+defensive_ranking | double | team defense quality relative to average as measured by SRS
+playoffs | character | made playoffs or not
+sb_winner | character | won superbowl or not    
+
+The last one is the information of every games:      
+
+```{r echo=FALSE, warning=FALSE}
+games <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-04/games.csv') %>%
+  as.data.frame()
+head(games)
+```
+
+the dictionary of this dataset is: 
+
+variable | class | description
+--------|--------|-------------
+year | integer | season year
+week | character | week number (1-17 and playoffs)
+home_team | character | home team
+away_team | character | away team
+winner | character | winning team
+tie | character | same for both team
+day | character | day of week
+date | character | date without year
+time | character | time of game start
+pts_win | double | points by winning team
+pts_loss | double | points by lossing team
+yds_win | double | yards by winning team
+turnovers_win | double | turnovers by winning team
+yds_loss | double | yards by losing team
+turnovers_loss | double | turnovers by losing team
+home_team_name | character | home team name
+home_team_city | character | home team city
+away_team_name | character | away team name
+away_team_name | character | away team city
+
+The additional data is from "https://www2.census.gov/programs-surveys/popest/datasets/2010-2019/national/totals/", the *United States Census* website. The data is about the population and population change in every state of the United States.    
+
+# Plan    
+
+The data I found have three aspects: the attendence, the teams and the games. The describe of this dataset is aiming to study the attendence performance. However, I think we can expand the thought because of the abundance of the information we have.    
+
+First, we can study the attendence performance with the time, the location, the team played and something like that as the description of the dataset. To study deeper of the information about the location, I also find the data of population and population change in every state. In this part, I plan to get a map of the performance of the attendence in each state and maybe a model of predicting the attendence as well.    
+
+Second, we can study the team strength with the performance of each team in all the games, like the points they got, the yards they ran and maybe there history performance. I hope the output is a model of estimating the strength using score like the quality measured by SRS (Simple Rating System) or maybe a model of predicting if the team will win the super bowl or make the playoffs, which may use the logistic model.    
+
+Finally, we can also study the result of the games. There should be more effects to the result of the game excpet the strength of the teams. The time, the location, the attendence all could influnce the performance of the team. In this part, the ideal output is to get a model to predict the result of the game using all the information we have.    
+
+It's important that the three parts study are independent with each other. For example, in the study of the team strength, we assume the strength is the response and the results of the games are parts of the effects. However, in the study of the games result, we assume the result is the response and the strength of team are parts of the effects. So we must be aware that we can't use the conclusion beyond the study we forcus on.      
+
+# Presentation
+
+It would be a systematic study, so I prefer a longer report instead of the presentation.  
+
+Thank you!   
+
+
+
+
+
+
+
+
+
+
+
+
+
